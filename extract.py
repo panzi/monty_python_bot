@@ -38,15 +38,17 @@ try:
 		for el in doc.cssselect('a[name], td #John, td #Graham, td #Michael, td #Eric, td #TerryJ, td #TerryG, td #Carol'):
 			if el.tag == 'a':
 				sketch_ref = el.attrib['name']
-				sketchnr = int(sketch_ref, 10)
-				query = "body > center > a[href='%s#%s']" % (fname, sketch_ref)
-				res = doc.cssselect(query)
-				if res:
-					sketch_title = res[0].text_content().strip()
-				else:
-					print("episode %d sketch %d: missing sketch title" % (episodenr, sketchnr))
-					sketch_title = None
-				cur.execute('insert into sketches (episodenr, sketchnr, title) values (?, ?, ?)', (episodenr, sketchnr, sketch_title))
+				new_sketchnr = int(sketch_ref, 10)
+				if new_sketchnr != sketchnr:
+					sketchnr = new_sketchnr
+					query = "body > center > a[href='%s#%s']" % (fname, sketch_ref)
+					res = doc.cssselect(query)
+					if res:
+						sketch_title = res[0].text_content().strip()
+					else:
+						print("episode %d sketch %d: missing sketch title" % (episodenr, sketchnr))
+						sketch_title = None
+					cur.execute('insert into sketches (episodenr, sketchnr, title) values (?, ?, ?)', (episodenr, sketchnr, sketch_title))
 			else:
 				quote = el.text_content()
 				if quote is not None:
