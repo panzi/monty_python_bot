@@ -35,17 +35,15 @@ def rank(raw_match_info):
 	return score
 
 class QuoteBot(irc.bot.SingleServerIRCBot):
-	def __init__(self, nickname, channels, cursor, password=None, server='irc.twitch.tv', port=6667, min_score=0, reply_line='same', react_to_messages=True):
-		if reply_line not in ('same', 'next'):
-			raise ValueError, 'illegal reply_line value: %r' % reply_line
-
+	def __init__(self, nickname, channels, cursor, password=None, server='irc.twitch.tv', port=6667, min_score=0, reply_with_next_line=False, react_to_messages=True):
 		self._join_channels = [channel if channel.startswith('#') else '#'+channel for channel in channels]
 
 		self._cursor = cursor
 		self._min_score = min_score
-		self._reply_next_line = reply_line == 'next'
+		self._reply_with_next_line = reply_with_next_line
 		self._react_to_messages = react_to_messages
 		self._current_line = None
+		self._mentioned = re.compile(r'\A\s*@?'+re.escape(nickname)+r'\b\s*:?', re.I)
 
 		irc.bot.SingleServerIRCBot.__init__(self, [(server, port, password)], nickname, nickname)
 
@@ -60,7 +58,7 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 	def on_pubmsg(self, connection, event):
 		message = event.arguments[0]
 		print('%s: %s' % (event.source.nick, message))
-		if message[0:1] == '!':
+		if message.startswith('!'):
 			command = message.split()
 			command, args = command[0], command[1:]
 
@@ -82,10 +80,15 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 			elif command == '!pyinfo':
 				self._say_info(event.target, True)
 
-		elif self._react_to_messages:
-			self._react(event.target, message, self._reply_next_line)
+		else:
+			match = self._mentioned.match(message)
+			if match:
+				self._react(event.target, message[match.end():], self._reply_with_next_line, verbose=True, reply_to=event.source.nick)
 
-	def _react(self, target, message, next_line=False, verbose=False):
+			elif self._react_to_messages:
+				self._react(event.target, message, self._reply_with_next_line)
+
+	def _react(self, target, message, next_line=False, verbose=False, reply_to=None):
 		query = PUNCT.sub(" ", message).lower()
 		self._cursor.execute("select docid, content, rank(matchinfo(quotes_fts)) as score from quotes_fts where content match ? order by score desc limit 1", [query])
 		res = self._cursor.fetchone()
@@ -99,18 +102,18 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 				self._current_line = line = (episodenr, sketchnr, quotenr, score, quote)
 
 				if next_line:
-					self._say_next_line(target, verbose)
+					self._say_next_line(target, verbose, reply_to=reply_to)
 				else:
-					self._say_line(target, verbose)
+					self._say_line(target, verbose, reply_to=reply_to)
 				found = True
 
 		if verbose and not found:
-			self._say(target, 'no quote found')
+			self._say(target, 'no quote found', reply_to=reply_to)
 
-	def _say_next_line(self, target, verbose=False):
+	def _say_next_line(self, target, verbose=False, reply_to=None):
 		if not self._current_line:
 			if verbose:
-				self._say(target, 'nothing quoted yet')
+				self._say(target, 'nothing quoted yet', reply_to=reply_to)
 			return
 
 		episodenr, sketchnr, quotenr, score, quote = self._current_line
@@ -119,7 +122,7 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 		self._cursor.execute("select rowid from quotes where episodenr = ? and sketchnr = ? and quotenr = ?", (episodenr, sketchnr, quotenr))
 		res = self._cursor.fetchone()
 		if not res:
-			self._say(target, 'no more lines in sketch')
+			self._say(target, 'no more lines in sketch', reply_to=reply_to)
 			return
 
 		docid, = res
@@ -127,12 +130,12 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 		quote, = self._cursor.fetchone()
 
 		self._current_line = line = (episodenr, sketchnr, quotenr, score, quote)
-		self._say_line(target)
+		self._say_line(target, reply_to=reply_to)
 	
-	def _say_info(self, target, verbose=False):
+	def _say_info(self, target, verbose=False, reply_to=None):
 		if not self._current_line:
 			if verbose:
-				self._say(target, 'nothing quoted yet')
+				self._say(target, 'nothing quoted yet', reply_to=reply_to)
 			return
 
 		episodenr, sketchnr, quotenr, score, quote = self._current_line
@@ -147,24 +150,30 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 			episodenr, episode_title, sketchnr, sketch_title or '(unknonw)', score,
 			'http://www.ibras.dk/montypython/episode%02d.htm#%d' % (episodenr, sketchnr) if sketchnr > 0 else
 			'http://www.ibras.dk/montypython/episode%02d.htm' % episodenr
-		))
+		), reply_to=reply_to)
 
-	def _say_line(self, target, verbose=False):
+	def _say_line(self, target, verbose=False, reply_to=None):
 		if not self._current_line:
 			if verbose:
-				self._say(target, 'no quote found')
+				self._say(target, 'no quote found', reply_to=reply_to)
 			return
 
 #		reply = "episode %d sketch %d line %d (match score %d): %s" % self._current_line
 		quote = self._current_line[4].replace('\n', ' ')
 		max_len = 512 - len(target) - 16
+
+		if reply_to:
+			max_len -= len(reply_to) + 3
 		
 		if len(quote) > max_len:
 			quote = quote[:max_len - 3].rstrip() + u'…'
 
-		self._say(target, quote)
+		self._say(target, quote, reply_to=reply_to)
 	
-	def _say(self, target, message):
+	def _say(self, target, message, reply_to=None):
+		if reply_to:
+			message = '@'+reply_to+': '+message
+
 		print('%s: %s' % (self.connection.get_nickname(), message))
 		self.connection.privmsg(target, message)
 
@@ -197,7 +206,7 @@ def main(args):
 			server,
 			port,
 			config.get('min_score', 0),
-			config.get('reply_line', 'same'),
+			config.get('reply_with_next_line', False),
 			config.get('react_to_messages', True))
 		bot.start()
 	finally:
