@@ -1,0 +1,8 @@
+nickname: monty_python_bot
+password: ...
+channels:
+    - bloody_albatross
+quotes: quotes.db
+min_score: 0
+reply_with_next_line: false
+react_to_messages: false
