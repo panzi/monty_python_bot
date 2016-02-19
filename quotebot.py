@@ -42,6 +42,7 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 		self._min_score = min_score
 		self._reply_with_next_line = reply_with_next_line
 		self._react_to_messages = react_to_messages
+		self._sender = None
 		self._current_line = None
 		self._mentioned = re.compile(r'\A\s*@?'+re.escape(nickname)+r'\b\s*:?', re.I)
 
@@ -63,32 +64,29 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 			command, args = command[0], command[1:]
 
 			if command == '!pyline' and args:
-				self._react(event.target, ' '.join(args), False, True)
+				self._react(event.target, ' '.join(args), verbose=True, sender=event.source.nick)
 				
 			elif command == '!pynext' and args:
-				self._react(event.target, ' '.join(args), True, True)
-
-			elif not self._current_line:
-				self._say(event.target, 'nothing quoted yet')
+				self._react(event.target, ' '.join(args), next_line=True, verbose=True, sender=event.source.nick)
 
 			elif command == '!pyline':
-				self._say_line(event.target)
+				self._say_line(event.target, sender=event.source.nick, verbose=True)
 
 			elif command == '!pynext':
-				self._say_next_line(event.target)
+				self._say_next_line(event.target, sender=event.source.nick, verbose=True)
 				
 			elif command == '!pyinfo':
-				self._say_info(event.target, True)
+				self._say_info(event.target, sender=event.source.nick, verbose=True)
 
 		else:
 			match = self._mentioned.match(message)
 			if match:
-				self._react(event.target, message[match.end():], self._reply_with_next_line, verbose=True, reply_to=event.source.nick)
+				self._react(event.target, message[match.end():], self._reply_with_next_line, verbose=True, sender=event.source.nick, reply=True)
 
 			elif self._react_to_messages:
-				self._react(event.target, message, self._reply_with_next_line)
+				self._react(event.target, message, self._reply_with_next_line, sender=event.source.nick)
 
-	def _react(self, target, message, next_line=False, verbose=False, reply_to=None):
+	def _react(self, target, message, next_line=False, verbose=False, sender=None, reply=False):
 		query = PUNCT.sub(" ", message).lower()
 		self._cursor.execute("select docid, content, rank(matchinfo(quotes_fts)) as score from quotes_fts where content match ? order by score desc limit 1", [query])
 		res = self._cursor.fetchone()
@@ -99,21 +97,22 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 				self._cursor.execute("select episodenr, sketchnr, quotenr from quotes where rowid = ?", [docid])
 				episodenr, sketchnr, quotenr = self._cursor.fetchone()
 
-				self._current_line = line = (episodenr, sketchnr, quotenr, score, quote)
+				self._sender = sender
+				self._current_line = (episodenr, sketchnr, quotenr, score, quote)
 
 				if next_line:
-					self._say_next_line(target, verbose, reply_to=reply_to)
+					self._say_next_line(target, verbose=verbose, sender=sender, reply=reply)
 				else:
-					self._say_line(target, verbose, reply_to=reply_to)
+					self._say_line(target, verbose=verbose, sender=sender, reply=reply)
 				found = True
 
 		if verbose and not found:
-			self._say(target, 'no quote found', reply_to=reply_to)
+			self._say(target, 'no quote found', sender=sender, reply=reply)
 
-	def _say_next_line(self, target, verbose=False, reply_to=None):
+	def _say_next_line(self, target, verbose=False, sender=None, reply=False):
 		if not self._current_line:
 			if verbose:
-				self._say(target, 'nothing quoted yet', reply_to=reply_to)
+				self._say(target, 'nothing quoted yet', sender=sender, reply=reply)
 			return
 
 		episodenr, sketchnr, quotenr, score, quote = self._current_line
@@ -122,20 +121,21 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 		self._cursor.execute("select rowid from quotes where episodenr = ? and sketchnr = ? and quotenr = ?", (episodenr, sketchnr, quotenr))
 		res = self._cursor.fetchone()
 		if not res:
-			self._say(target, 'no more lines in sketch', reply_to=reply_to)
+			self._say(target, 'no more lines in sketch', sender=sender, reply=reply)
 			return
 
 		docid, = res
 		self._cursor.execute("select content from quotes_fts where docid = ?", [docid])
 		quote, = self._cursor.fetchone()
 
-		self._current_line = line = (episodenr, sketchnr, quotenr, score, quote)
-		self._say_line(target, reply_to=reply_to)
+		self._sender = sender
+		self._current_line = (episodenr, sketchnr, quotenr, score, quote)
+		self._say_line(target, sender=sender, reply=reply)
 	
-	def _say_info(self, target, verbose=False, reply_to=None):
+	def _say_info(self, target, verbose=False, sender=None, reply=False):
 		if not self._current_line:
 			if verbose:
-				self._say(target, 'nothing quoted yet', reply_to=reply_to)
+				self._say(target, 'nothing quoted yet', sender=sender, reply=reply)
 			return
 
 		episodenr, sketchnr, quotenr, score, quote = self._current_line
@@ -146,33 +146,33 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 		self._cursor.execute("select title from sketches where sketchnr = ?", [sketchnr])
 		sketch_title = self._cursor.fetchone()[0]
 
-		self._say(target, "Last quote was from episode %d: %s, sketch %d: %s and was matched with a score of %f. %s" % (
-			episodenr, episode_title, sketchnr, sketch_title or '(unknonw)', score,
+		self._say(target, "Last quote was from Monty Python's Flying Circus episode %d: %s, sketch %d: %s in reply to %s and was matched with a score of %f. %s" % (
+			episodenr, episode_title, sketchnr, sketch_title or '(unknonw)', self._sender, score,
 			'http://www.ibras.dk/montypython/episode%02d.htm#%d' % (episodenr, sketchnr) if sketchnr > 0 else
 			'http://www.ibras.dk/montypython/episode%02d.htm' % episodenr
-		), reply_to=reply_to)
+		), sender=sender, reply=reply)
 
-	def _say_line(self, target, verbose=False, reply_to=None):
+	def _say_line(self, target, verbose=False, sender=None, reply=False):
 		if not self._current_line:
 			if verbose:
-				self._say(target, 'no quote found', reply_to=reply_to)
+				self._say(target, 'no quote found', sender=sender, reply=reply)
 			return
 
 #		reply = "episode %d sketch %d line %d (match score %d): %s" % self._current_line
 		quote = self._current_line[4].replace('\n', ' ')
 		max_len = 512 - len(target) - 16
 
-		if reply_to:
-			max_len -= len(reply_to) + 3
+		if reply:
+			max_len -= len(sender) + 3
 		
 		if len(quote) > max_len:
 			quote = quote[:max_len - 3].rstrip() + u'…'
 
-		self._say(target, quote, reply_to=reply_to)
+		self._say(target, quote, sender=sender, reply=reply)
 	
-	def _say(self, target, message, reply_to=None):
-		if reply_to:
-			message = '@'+reply_to+': '+message
+	def _say(self, target, message, sender=None, reply=False):
+		if reply:
+			message = '@'+sender+': '+message
 
 		print('%s: %s' % (self.connection.get_nickname(), message))
 		self.connection.privmsg(target, message)
