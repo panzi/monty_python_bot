@@ -121,7 +121,7 @@ class QuoteBot(irc.bot.SingleServerIRCBot):
 		self._cursor.execute("select rowid from quotes where episodenr = ? and sketchnr = ? and quotenr = ?", (episodenr, sketchnr, quotenr))
 		res = self._cursor.fetchone()
 		if not res:
-			self._say(target, 'no more lines in sketch', sender=sender, reply=reply)
+			self._say(target, 'no more lines in this sketch', sender=sender, reply=reply)
 			return
 
 		docid, = res

@@ -12,9 +12,8 @@ DB = 'quotes.db'
 IGNORE = ['i.e.', 'e.g.', 'etc.', 'Mr.', 'Mrs.', 'Dr.', 'Ldt.', 'A.D.', 'B.C.']
 
 EP_PREFIX = re.compile(r'^\s*Episode\s+\w+(-\w+)*:', re.I)
-SPLIT = re.compile(r'(?:[\.!?]+|\r?\n[ \t]*\r?\n)', re.I)
-NO_SPLIT = re.compile(r'\b(?:' + '|'.join(re.escape(x) for x in IGNORE) + r'|[IVXCM]+\.|[A-Z]\.|\.\.+)$', re.I)
-PUNCT = re.compile(r'[-\s\.\!\?\'"/()\\+*:,;{}]+')
+SPLIT = re.compile(r'(?:(\s*[\.!?])+|\r?\n[ \t]*\r?\n)', re.I)
+NO_SPLIT = re.compile(r'\b(?:' + '|'.join(re.escape(x) for x in IGNORE) + r'|[IVXCM]+\.|[A-Z]\.|\s*\.(?:\s*\.)+)$', re.I)
 BLACKLIST = set(s.lower() for s in
 	["Monty Python's Flying Circus.", "'MONTY PYTHON'S FLYING CIRCUS'"])
 
